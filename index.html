@@ -1,0 +1,354 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Calculator, Trash2, TrendingDown, Calendar, Scale, Info } from 'lucide-react';
+
+const App = () => {
+  // --- State Management ---
+  const [records, setRecords] = useState(() => {
+    const saved = localStorage.getItem('weightRecords');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [inputs, setInputs] = useState({
+    wake: '',
+    postFood: '',
+    postToilet: '',
+    date: new Date().toISOString().split('T')[0]
+  });
+
+  const [chartView, setChartView] = useState('daily'); // 'daily', 'weekly', 'monthly'
+
+  // --- Persistence ---
+  useEffect(() => {
+    localStorage.setItem('weightRecords', JSON.stringify(records));
+  }, [records]);
+
+  // --- Handlers ---
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setInputs(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleAddRecord = (e) => {
+    e.preventDefault();
+    if (!inputs.wake || !inputs.postFood || !inputs.postToilet) return;
+
+    const wake = parseFloat(inputs.wake);
+    const postFood = parseFloat(inputs.postFood);
+    const postToilet = parseFloat(inputs.postToilet);
+
+    // Logic from user: 
+    // Waste = PostFood - PostToilet
+    // TrueWeight = Wake - Waste
+    const waste = parseFloat((postFood - postToilet).toFixed(2));
+    const trueWeight = parseFloat((wake - waste).toFixed(2));
+
+    const newRecord = {
+      id: Date.now(),
+      date: inputs.date,
+      wake,
+      postFood,
+      postToilet,
+      waste,
+      net: trueWeight
+    };
+
+    const otherRecords = records.filter(r => r.date !== inputs.date);
+    const updatedRecords = [...otherRecords, newRecord].sort((a, b) => new Date(a.date) - new Date(b.date));
+    
+    setRecords(updatedRecords);
+    setInputs(prev => ({ ...prev, wake: '', postFood: '', postToilet: '' }));
+  };
+
+  const handleDelete = (id) => {
+    if (window.confirm('确定要删除这条记录吗？')) {
+      setRecords(records.filter(r => r.id !== id));
+    }
+  };
+
+  // --- Statistics Calculation ---
+  const stats = useMemo(() => {
+    if (records.length === 0) return { totalLost: 0, currentWeekAvg: 0, latestWeight: 0 };
+
+    const sorted = [...records].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const latest = sorted[sorted.length - 1];
+    const first = sorted[0];
+    
+    const totalLost = (first.net - latest.net).toFixed(2);
+    
+    const lastDate = new Date(latest.date);
+    const weekAgo = new Date(lastDate);
+    weekAgo.setDate(lastDate.getDate() - 6);
+    
+    const weekRecords = sorted.filter(r => new Date(r.date) >= weekAgo && new Date(r.date) <= lastDate);
+    const weekSum = weekRecords.reduce((acc, curr) => acc + curr.net, 0);
+    const currentWeekAvg = weekRecords.length ? (weekSum / weekRecords.length).toFixed(2) : 0;
+
+    return {
+      totalLost,
+      currentWeekAvg,
+      latestWeight: latest.net
+    };
+  }, [records]);
+
+  // --- Chart Data Processing ---
+  const chartData = useMemo(() => {
+    if (records.length === 0) return [];
+    
+    const sorted = [...records].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    if (chartView === 'daily') {
+      return sorted.map(r => ({ name: r.date.slice(5), value: r.net, fullDate: r.date }));
+    }
+
+    if (chartView === 'weekly') {
+      const grouped = {};
+      sorted.forEach(r => {
+        const d = new Date(r.date);
+        const oneJan = new Date(d.getFullYear(), 0, 1);
+        const numberOfDays = Math.floor((d - oneJan) / (24 * 60 * 60 * 1000));
+        const weekNum = Math.ceil((d.getDay() + 1 + numberOfDays) / 7);
+        const key = `${d.getFullYear()}-W${weekNum}`;
+        
+        if (!grouped[key]) grouped[key] = { sum: 0, count: 0, name: `第${weekNum}周` };
+        grouped[key].sum += r.net;
+        grouped[key].count += 1;
+      });
+      return Object.values(grouped).map(g => ({ name: g.name, value: parseFloat((g.sum / g.count).toFixed(2)) }));
+    }
+
+    if (chartView === 'monthly') {
+      const grouped = {};
+      sorted.forEach(r => {
+        const key = r.date.slice(0, 7);
+        if (!grouped[key]) grouped[key] = { sum: 0, count: 0, name: key };
+        grouped[key].sum += r.net;
+        grouped[key].count += 1;
+      });
+      return Object.values(grouped).map(g => ({ name: g.name, value: parseFloat((g.sum / g.count).toFixed(2)) }));
+    }
+    return [];
+  }, [records, chartView]);
+
+  return (
+    // Global Background: Dark Gradient
+    <div className="min-h-screen bg-slate-950 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-purple-900/30 via-slate-950 to-black text-slate-200 font-sans pb-10">
+      
+      {/* Header: Red/Purple Gradient */}
+      <header className="bg-gradient-to-br from-red-700 via-purple-900 to-slate-900 text-white p-6 shadow-2xl shadow-purple-900/20 rounded-b-3xl mb-6 relative overflow-hidden">
+        {/* Decorative circle for style */}
+        <div className="absolute -top-10 -right-10 w-40 h-40 bg-red-500/20 rounded-full blur-3xl"></div>
+
+        <div className="max-w-md mx-auto relative z-10">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Scale className="w-8 h-8 text-red-200" />
+            <span className="bg-clip-text text-transparent bg-gradient-to-r from-white to-red-100">
+              净重减脂记录
+            </span>
+          </h1>
+          <p className="opacity-70 text-sm mt-1 text-red-100/60">Target: Shredded</p>
+          
+          <div className="grid grid-cols-3 gap-4 mt-6">
+            <div className="bg-black/20 border border-white/10 p-3 rounded-xl text-center backdrop-blur-sm">
+              <div className="text-xs text-red-200/70 mb-1">当前净重</div>
+              <div className="text-xl font-bold text-white">{stats.latestWeight || '--'} <span className="text-xs opacity-50">kg</span></div>
+            </div>
+            <div className="bg-black/20 border border-white/10 p-3 rounded-xl text-center backdrop-blur-sm">
+              <div className="text-xs text-red-200/70 mb-1">已减去</div>
+              <div className="text-xl font-bold text-red-400">{stats.totalLost > 0 ? `-${stats.totalLost}` : stats.totalLost} <span className="text-xs opacity-50">kg</span></div>
+            </div>
+            <div className="bg-black/20 border border-white/10 p-3 rounded-xl text-center backdrop-blur-sm">
+              <div className="text-xs text-red-200/70 mb-1">近7天平均</div>
+              <div className="text-xl font-bold text-purple-300">{stats.currentWeekAvg || '--'} <span className="text-xs opacity-50">kg</span></div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-md mx-auto px-4 space-y-6">
+        
+        {/* Input Form: Dark Glassmorphism */}
+        <section className="bg-slate-900/60 backdrop-blur-md p-5 rounded-2xl shadow-xl border border-white/5">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-white">
+            <Calculator className="w-5 h-5 text-red-500" />
+            今日录入
+          </h2>
+          <form onSubmit={handleAddRecord} className="space-y-4">
+            <div>
+              <label className="text-xs font-medium text-slate-400 mb-1 block">日期</label>
+              <input 
+                type="date" 
+                name="date"
+                required
+                value={inputs.date}
+                onChange={handleInputChange}
+                className="w-full bg-black/40 border border-slate-700 rounded-lg p-2 text-sm text-white outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
+                style={{colorScheme: 'dark'}}
+              />
+            </div>
+            
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs font-medium text-slate-400 mb-1 block">① 起床</label>
+                <input 
+                  type="number" step="0.01" placeholder="00.0" name="wake"
+                  value={inputs.wake} onChange={handleInputChange} required
+                  className="w-full bg-black/40 border border-slate-700 rounded-lg p-2 text-sm text-center text-white outline-none focus:ring-2 focus:ring-red-500 transition-all placeholder-slate-600"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-400 mb-1 block">② 饭后</label>
+                <input 
+                  type="number" step="0.01" placeholder="00.0" name="postFood"
+                  value={inputs.postFood} onChange={handleInputChange} required
+                  className="w-full bg-black/40 border border-slate-700 rounded-lg p-2 text-sm text-center text-white outline-none focus:ring-2 focus:ring-red-500 transition-all placeholder-slate-600"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-400 mb-1 block">③ 厕后</label>
+                <input 
+                  type="number" step="0.01" placeholder="00.0" name="postToilet"
+                  value={inputs.postToilet} onChange={handleInputChange} required
+                  className="w-full bg-black/40 border border-slate-700 rounded-lg p-2 text-sm text-center text-white outline-none focus:ring-2 focus:ring-red-500 transition-all placeholder-slate-600"
+                />
+              </div>
+            </div>
+
+            {/* Live Preview */}
+            {inputs.wake && inputs.postFood && inputs.postToilet && (
+              <div className="bg-gradient-to-r from-red-900/20 to-purple-900/20 border border-red-500/20 p-3 rounded-lg text-sm text-slate-300 flex justify-between items-center">
+                <span>
+                  排泄物: <span className="font-bold text-red-300">{(inputs.postFood - inputs.postToilet).toFixed(2)}</span>
+                </span>
+                <span className="text-red-400 font-bold border-l border-white/10 pl-3">
+                  净重: {(inputs.wake - (inputs.postFood - inputs.postToilet)).toFixed(2)} kg
+                </span>
+              </div>
+            )}
+
+            <button 
+              type="submit"
+              className="w-full bg-gradient-to-r from-red-600 to-purple-600 hover:from-red-500 hover:to-purple-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-purple-900/20 flex justify-center items-center gap-2 active:scale-[0.98]"
+            >
+              计算并保存
+            </button>
+          </form>
+        </section>
+
+        {/* Charts */}
+        {records.length > 1 && (
+          <section className="bg-slate-900/60 backdrop-blur-md p-5 rounded-2xl shadow-xl border border-white/5">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-semibold flex items-center gap-2 text-white">
+                <TrendingDown className="w-5 h-5 text-purple-400" />
+                趋势分析
+              </h2>
+              <div className="flex bg-black/40 rounded-lg p-1 border border-white/5">
+                {['daily', 'weekly', 'monthly'].map(view => (
+                  <button
+                    key={view}
+                    onClick={() => setChartView(view)}
+                    className={`px-3 py-1 text-xs rounded-md transition-all ${chartView === view ? 'bg-slate-800 text-red-400 font-bold shadow-sm ring-1 ring-white/10' : 'text-slate-500 hover:text-slate-300'}`}
+                  >
+                    {view === 'daily' ? '天' : view === 'weekly' ? '周' : '月'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#334155" opacity={0.4} />
+                  <XAxis 
+                    dataKey="name" 
+                    tick={{fontSize: 10, fill: '#94a3b8'}} 
+                    tickLine={false}
+                    axisLine={false}
+                    interval="preserveStartEnd"
+                  />
+                  <YAxis 
+                    domain={['dataMin - 1', 'dataMax + 1']} 
+                    tick={{fontSize: 10, fill: '#94a3b8'}} 
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(val) => val.toFixed(1)}
+                  />
+                  <Tooltip 
+                    contentStyle={{
+                      backgroundColor: '#1e293b', 
+                      borderRadius: '12px', 
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      color: '#f8fafc',
+                      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.5)'
+                    }}
+                    itemStyle={{ color: '#f43f5e' }}
+                    labelStyle={{ color: '#94a3b8', marginBottom: '0.5rem' }}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="value" 
+                    stroke="#f43f5e" 
+                    strokeWidth={3} 
+                    dot={{fill: '#f43f5e', r: 3, strokeWidth: 0}} 
+                    activeDot={{r: 6, fill: '#fff', stroke: '#f43f5e', strokeWidth: 2}}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+        )}
+
+        {/* History List */}
+        <section className="bg-slate-900/60 backdrop-blur-md p-5 rounded-2xl shadow-xl border border-white/5">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-white">
+            <Calendar className="w-5 h-5 text-red-500" />
+            历史记录
+          </h2>
+          
+          <div className="space-y-3">
+            {[...records].sort((a, b) => new Date(b.date) - new Date(a.date)).map(record => (
+              <div key={record.id} className="group flex justify-between items-center p-3 hover:bg-white/5 rounded-xl border border-transparent hover:border-white/5 transition-all">
+                <div>
+                  <div className="font-bold text-slate-200">{record.date}</div>
+                  <div className="text-xs text-slate-500 mt-1 flex gap-2">
+                    <span>起: {record.wake}</span>
+                    <span>食: {record.postFood}</span>
+                    <span>厕: {record.postToilet}</span>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <div className="text-lg font-bold text-red-400">{record.net} <span className="text-xs opacity-60">kg</span></div>
+                    <div className="text-xs text-slate-600">排泄: {record.waste}</div>
+                  </div>
+                  <button 
+                    onClick={() => handleDelete(record.id)}
+                    className="p-2 text-slate-600 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+            
+            {records.length === 0 && (
+              <div className="text-center py-10 text-slate-600 text-sm border-2 border-dashed border-slate-800 rounded-xl">
+                还没有记录，快去添加第一条数据吧！
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Footer Info */}
+        <div className="text-center text-xs text-slate-600 pb-4 flex justify-center items-center gap-1">
+          <Info className="w-3 h-3" />
+          数据保存在本地浏览器中
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default App;
